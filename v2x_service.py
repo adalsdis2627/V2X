@@ -12,7 +12,7 @@ QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_Cola'
 
 vehicles_state = {}
 
-def sqs_listener():
+def sqs_listener(): 
     # Comprobación básica de URL configurada
     if "TU_ACCOUNT_ID" in QUEUE_URL:
         print("❌ ERROR: Debes cambiar 'TU_ACCOUNT_ID' por tu URL real de SQS en el código.")
