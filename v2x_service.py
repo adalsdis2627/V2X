@@ -1,19 +1,18 @@
 import time
-import json 
+import json
 import threading
 from flask import Flask, jsonify, render_template_string
 import boto3
- 
-app = Flask(__name__)
- 
-# ⚠️ PEGA AQUÍ LA URL REAL QUE HAS COPIADO DE AWS SQS
-SQS_REGION = 'us-east-1'
-QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_Cola'
 
+app = Flask(__name__)
+
+SQS_REGION = 'us-east-1'
+QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/523572554218/V2X_1'
+
+# Almacenaremos un histórico/lista de eventos activos por vehículo
 vehicles_state = {}
 
-def sqs_listener(): 
-    # Comprobación básica de URL configurada
+def sqs_listener():
     if "TU_ACCOUNT_ID" in QUEUE_URL:
         print("❌ ERROR: Debes cambiar 'TU_ACCOUNT_ID' por tu URL real de SQS en el código.")
         return
@@ -34,16 +33,42 @@ def sqs_listener():
                 veh_id = body.get('source_id')
                 event_type = body.get('event_type')
                 payload = body.get('payload', {})
-                
-                vehicles_state[veh_id] = {
-                    "id": veh_id,
-                    "x": payload.get("x", 50),
-                    "y": payload.get("y", 50),
-                    "speed": payload.get("speed", 0),
-                    "event_type": event_type,
-                    "alert": (event_type == "sudden braking" or payload.get("speed", 0) > 100),
-                    "last_update": time.strftime("%H:%M:%S")
+                current_time = time.time() * 1000
+                formatted_time = time.strftime("%H:%M:%S")
+
+                # Si el vehículo no existe aún en el estado, lo inicializamos
+                if veh_id not in vehicles_state:
+                    vehicles_state[veh_id] = {
+                        "id": veh_id,
+                        "x": payload.get("x", 50),
+                        "y": payload.get("y", 50),
+                        "speed": payload.get("speed", 0),
+                        "events": [],
+                        "timestamp": current_time,
+                        "last_update": formatted_time
+                    }
+
+                veh = vehicles_state[veh_id]
+                veh["x"] = payload.get("x", veh["x"])
+                veh["y"] = payload.get("y", veh["y"])
+                veh["speed"] = payload.get("speed", veh["speed"])
+                veh["timestamp"] = current_time
+                veh["last_update"] = formatted_time
+
+                # Gestionar lista de eventos activos (permitiendo acumular hasta 3 eventos recientes)
+                # Filtramos eventos duplicados idénticos recientes o añadimos el nuevo
+                new_event = {
+                    "type": event_type,
+                    "timestamp": current_time
                 }
+                
+                # Evitar duplicar exactamente el mismo tipo seguido si ya está presente
+                active_events = [e for e in veh["events"] if (current_time - e["timestamp"]) < 10000]
+                if not any(e["type"] == event_type for e in active_events):
+                    active_events.append(new_event)
+                
+                # Limitar a un máximo de 3 eventos simultáneos
+                veh["events"] = active_events[-3:]
                 
                 sqs.delete_message(
                     QueueUrl=QUEUE_URL,
@@ -58,21 +83,21 @@ HTML_TEMPLATE = """
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard V2X</title>
+    <title>Dashboard V2X - Circuito Cerrado</title>
     <style>
         body { font-family: Arial, sans-serif; background-color: #1a1a24; color: white; text-align: center; margin: 0; padding: 20px; }
-        #canvas-container { margin: 15px auto; display: inline-block; border: 3px solid #444; border-radius: 8px; background-color: #222230; }
+        #canvas-container { margin: 15px auto; display: inline-block; border: 3px solid #444; border-radius: 8px; background-color: #111118; }
         canvas { display: block; }
-        .vehicle-card { display: inline-block; background: #2a2a3c; padding: 10px 15px; margin: 5px; border-radius: 6px; text-align: left; font-size: 13px; width: 150px; }
-        .alert-card { border: 2px solid #ff4444; background: #4a1515; }
+        .vehicle-card { display: inline-block; background: #2a2a3c; padding: 10px 15px; margin: 5px; border-radius: 6px; text-align: left; font-size: 12px; width: 170px; vertical-align: top; }
         .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .normal { background-color: #00ff88; }
-        .danger { background-color: #ff4444; }
+        .events-list { margin: 5px 0 0 0; padding-left: 15px; color: #ffdd57; }
+        .events-list li { font-size: 11px; }
     </style>
 </head>
 <body>
-    <h1>🚗 Dashboard V2X-SERVICE (MVP)2.2</h1>
-    <div id="canvas-container"><canvas id="map" width="600" height="400"></canvas></div>
+    <h1>🚗 Dashboard V2X - Circuito de 4 Carriles</h1>
+    <div id="canvas-container"><canvas id="map" width="700" height="400"></canvas></div>
     <h2>Vehículos en línea</h2>
     <div id="vehicles-list">Esperando datos de la SQS...</div>
 
@@ -80,47 +105,106 @@ HTML_TEMPLATE = """
         const canvas = document.getElementById('map');
         const ctx = canvas.getContext('2d');
 
-        function drawGrid() {
+        function drawRoads() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = "#333344";
-            for (let x = 0; x < canvas.width; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-            for (let y = 0; y < canvas.height; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+            const laneHeight = canvas.height / 5;
+            
+            for (let i = 1; i <= 4; i++) {
+                let yPos = i * laneHeight;
+                
+                ctx.strokeStyle = "#444455";
+                ctx.lineWidth = 25;
+                ctx.beginPath();
+                ctx.moveTo(50, yPos);
+                ctx.lineTo(canvas.width - 50, yPos);
+                ctx.stroke();
+
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 2;
+                ctx.setLineDash([10, 10]);
+                ctx.beginPath();
+                ctx.moveTo(50, yPos);
+                ctx.lineTo(canvas.width - 50, yPos);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
 
         async function updateDashboard() {
             try {
                 const res = await fetch('/api/vehicles');
                 const data = await res.json();
-                drawGrid();
+                drawRoads();
                 const listDiv = document.getElementById('vehicles-list');
                 listDiv.innerHTML = '';
 
-                Object.values(data).forEach(veh => {
+                const now = Date.now();
+                const laneHeight = canvas.height / 5;
+
+                // Filtrar coches inactivos (más de 15s sin mensajes)
+                const vehiclesArray = Object.values(data).filter(veh => {
+                    return (now - veh.timestamp) <= 15000;
+                });
+
+                if (vehiclesArray.length === 0) {
+                    listDiv.innerHTML = 'Esperando datos de la SQS o vehículos inactivos...';
+                    return;
+                }
+
+                vehiclesArray.forEach((veh, index) => {
+                    let laneIndex = (index % 4) + 1;
+                    let targetY = laneIndex * laneHeight;
+
+                    let trackWidth = canvas.width - 100;
+                    let mappedX = 50 + (veh.x % trackWidth);
+
+                    // Determinar si tiene eventos activos críticos (ej: sudden braking)
+                    let hasAlert = veh.events && veh.events.some(e => e.type !== "normal telemetry");
+
+                    // Dibujar coche en el canvas (punto azul o rojo según alerta)
                     ctx.beginPath();
-                    ctx.arc(veh.x, veh.y, 14, 0, 2 * Math.PI);
-                    ctx.fillStyle = veh.alert ? '#ff4444' : '#00ccff';
+                    ctx.arc(mappedX, targetY, 12, 0, 2 * Math.PI);
+                    ctx.fillStyle = hasAlert ? '#ff4444' : '#00ccff';
                     ctx.fill();
                     ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
                     ctx.stroke();
 
                     ctx.fillStyle = '#ffffff';
                     ctx.font = '11px Arial';
-                    ctx.fillText(veh.id, veh.x - 18, veh.y - 18);
+                    ctx.fillText(veh.id, mappedX - 15, targetY - 16);
 
-                    if (veh.alert) {
+                    if (hasAlert) {
                         ctx.fillStyle = '#ffff00';
-                        ctx.font = '14px Arial';
-                        ctx.fillText('⚠️', veh.x - 6, veh.y + 5);
+                        ctx.font = '12px Arial';
+                        ctx.fillText('⚠️', mappedX - 5, targetY + 4);
                     }
 
+                    // Construir lista de HTML para los eventos actuales (hasta 3)
+                    let eventsHtml = "";
+                    let validEvents = veh.events ? veh.events.filter(e => (now - e.timestamp) < 10000) : [];
+                    
+                    if (validEvents.length === 0) {
+                        eventsHtml = "<li>Ninguna</li>";
+                    } else {
+                        validEvents.forEach(ev => {
+                            eventsHtml += `<li>${ev.type}</li>`;
+                        });
+                    }
+
+                    // Tarjeta informativa con el diseño limpio solicitado
                     const card = document.createElement('div');
-                    card.className = `vehicle-card ${veh.alert ? 'alert-card' : ''}`;
+                    card.className = `vehicle-card`;
                     card.innerHTML = `
-                        <strong><span class="status-dot ${veh.alert ? 'danger' : 'normal'}"></span>${veh.id}</strong><br>
-                        Vel: ${veh.speed} km/h<br>
+                        <strong><span class="status-dot ${hasAlert ? 'danger' : 'normal'}"></span>${veh.id}</strong><br>
+                        Carril: ${laneIndex} | Vel: ${veh.speed} km/h<br>
                         Pos: (${veh.x}, ${veh.y})<br>
-                        Evento: ${veh.event_type}<br>
-                        <small>Hora: ${veh.last_update}</small>
+                        <hr style="border: 0; border-top: 1px solid #444; margin: 5px 0;">
+                        <small><strong>Eventos actuales:</strong></small>
+                        <ul class="events-list">
+                            ${eventsHtml}
+                        </ul>
+                        <small style="color: #888;">Hora: ${veh.last_update}</small>
                     `;
                     listDiv.appendChild(card);
                 });
