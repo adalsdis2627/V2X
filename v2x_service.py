@@ -9,7 +9,6 @@ app = Flask(__name__)
 SQS_REGION = 'us-east-1'
 QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_Cola'
 
-# Almacenamiento en memoria de los vehículos y sus eventos activos
 vehicles_state = {}
 
 def sqs_listener():
@@ -33,19 +32,17 @@ def sqs_listener():
                 veh_id = body.get('source_id')
                 payload = body.get('payload', {})
                 
-                # Recogemos la lista de eventos múltiples enviada por el simulador
-                # Si por compatibilidad viene solo event_type, lo metemos en una lista
                 active_events_list = body.get('active_events', [body.get('event_type', 'normal telemetry')])
                 
                 current_time = time.time() * 1000
                 formatted_time = time.strftime("%H:%M:%S")
 
-                # Inicializar vehículo si no existe
                 if veh_id not in vehicles_state:
                     vehicles_state[veh_id] = {
                         "id": veh_id,
                         "x": payload.get("x", 50),
-                        "y": payload.get("y", 50),
+                        "y": payload.get("y", 80),
+                        "lane": payload.get("lane", 1),
                         "speed": payload.get("speed", 0),
                         "events": [],
                         "timestamp": current_time,
@@ -55,11 +52,11 @@ def sqs_listener():
                 veh = vehicles_state[veh_id]
                 veh["x"] = payload.get("x", veh["x"])
                 veh["y"] = payload.get("y", veh["y"])
+                veh["lane"] = payload.get("lane", veh["lane"])
                 veh["speed"] = payload.get("speed", veh["speed"])
                 veh["timestamp"] = current_time
                 veh["last_update"] = formatted_time
 
-                # Procesar y almacenar hasta 3 eventos simultáneos con su marca de tiempo
                 formatted_events = []
                 for ev_name in active_events_list[:3]:
                     formatted_events.append({
@@ -69,7 +66,6 @@ def sqs_listener():
                 
                 veh["events"] = formatted_events
                 
-                # Borrar mensaje de la cola SQS tras procesarlo con éxito
                 sqs.delete_message(
                     QueueUrl=QUEUE_URL,
                     ReceiptHandle=msg['ReceiptHandle']
@@ -140,9 +136,7 @@ HTML_TEMPLATE = """
                 listDiv.innerHTML = '';
 
                 const now = Date.now();
-                const laneHeight = canvas.height / 5;
 
-                // Filtrar coches inactivos (más de 15s sin mensajes en SQS)
                 const vehiclesArray = Object.values(data).filter(veh => {
                     return (now - veh.timestamp) <= 15000;
                 });
@@ -152,14 +146,10 @@ HTML_TEMPLATE = """
                     return;
                 }
 
-                vehiclesArray.forEach((veh, index) => {
-                    let laneIndex = (index % 4) + 1;
-                    let targetY = laneIndex * laneHeight;
+                vehiclesArray.forEach((veh) => {
+                    let targetY = veh.y; // Usamos la posición Y exacta enviada por el simulador
+                    let mappedX = veh.x;
 
-                    let trackWidth = canvas.width - 100;
-                    let mappedX = 50 + (veh.x % trackWidth);
-
-                    // Comprobar si hay alguna alerta activa (distinta de telemetría normal)
                     let hasAlert = veh.events && veh.events.some(e => e.type !== "normal telemetry");
 
                     // Dibujar el coche en el canvas
@@ -181,7 +171,6 @@ HTML_TEMPLATE = """
                         ctx.fillText('⚠️', mappedX - 5, targetY + 4);
                     }
 
-                    // Generar lista HTML de eventos actuales (hasta 3 simultáneos)
                     let eventsHtml = "";
                     let validEvents = veh.events ? veh.events.filter(e => (now - e.timestamp) < 15000) : [];
                     
@@ -193,13 +182,12 @@ HTML_TEMPLATE = """
                         });
                     }
 
-                    // Tarjeta informativa inferior
                     const card = document.createElement('div');
                     card.className = `vehicle-card`;
                     card.innerHTML = `
                         <strong><span class="status-dot ${hasAlert ? 'danger' : 'normal'}"></span>${veh.id}</strong><br>
-                        Carril: ${laneIndex} | Vel: ${veh.speed} km/h<br>
-                        Pos: (${veh.x}, ${veh.y})<br>
+                        Carril: ${veh.lane} | Vel: ${veh.speed} km/h<br>
+                        Pos: (${Math.round(veh.x)}, ${Math.round(veh.y)})<br>
                         <hr style="border: 0; border-top: 1px solid #444; margin: 5px 0;">
                         <small><strong>Eventos actuales:</strong></small>
                         <ul class="events-list">
