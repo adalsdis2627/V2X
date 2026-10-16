@@ -7,7 +7,7 @@ import boto3
 app = Flask(__name__)
 
 SQS_REGION = 'us-east-1'
-QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/523572554218/V2X_1'
+QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_1'
 
 # Almacenaremos un histórico/lista de eventos activos por vehículo
 vehicles_state = {}
