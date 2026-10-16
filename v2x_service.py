@@ -24,7 +24,7 @@ def sqs_listener():
             response = sqs.receive_message(
                 QueueUrl=QUEUE_URL,
                 MaxNumberOfMessages=10,
-                WaitTimeSeconds=5
+                WaitTimeSeconds=1
             )
             messages = response.get('Messages', [])
             for msg in messages:
@@ -72,7 +72,7 @@ def sqs_listener():
                 )
         except Exception as e:
             print(f"Error procesando SQS: {e}")
-        time.sleep(0.5)
+        time.sleep(0.2)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
