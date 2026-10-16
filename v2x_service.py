@@ -9,7 +9,7 @@ app = Flask(__name__)
 SQS_REGION = 'us-east-1'
 QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_Cola'
 
-# Almacenaremos un histórico/lista de eventos activos por vehículo
+# Almacenamiento en memoria de los vehículos y sus eventos activos
 vehicles_state = {}
 
 def sqs_listener():
@@ -31,12 +31,16 @@ def sqs_listener():
             for msg in messages:
                 body = json.loads(msg['Body'])
                 veh_id = body.get('source_id')
-                event_type = body.get('event_type')
                 payload = body.get('payload', {})
+                
+                # Recogemos la lista de eventos múltiples enviada por el simulador
+                # Si por compatibilidad viene solo event_type, lo metemos en una lista
+                active_events_list = body.get('active_events', [body.get('event_type', 'normal telemetry')])
+                
                 current_time = time.time() * 1000
                 formatted_time = time.strftime("%H:%M:%S")
 
-                # Si el vehículo no existe aún en el estado, lo inicializamos
+                # Inicializar vehículo si no existe
                 if veh_id not in vehicles_state:
                     vehicles_state[veh_id] = {
                         "id": veh_id,
@@ -55,21 +59,17 @@ def sqs_listener():
                 veh["timestamp"] = current_time
                 veh["last_update"] = formatted_time
 
-                # Gestionar lista de eventos activos (permitiendo acumular hasta 3 eventos recientes)
-                # Filtramos eventos duplicados idénticos recientes o añadimos el nuevo
-                new_event = {
-                    "type": event_type,
-                    "timestamp": current_time
-                }
+                # Procesar y almacenar hasta 3 eventos simultáneos con su marca de tiempo
+                formatted_events = []
+                for ev_name in active_events_list[:3]:
+                    formatted_events.append({
+                        "type": ev_name,
+                        "timestamp": current_time
+                    })
                 
-                # Evitar duplicar exactamente el mismo tipo seguido si ya está presente
-                active_events = [e for e in veh["events"] if (current_time - e["timestamp"]) < 10000]
-                if not any(e["type"] == event_type for e in active_events):
-                    active_events.append(new_event)
+                veh["events"] = formatted_events
                 
-                # Limitar a un máximo de 3 eventos simultáneos
-                veh["events"] = active_events[-3:]
-                
+                # Borrar mensaje de la cola SQS tras procesarlo con éxito
                 sqs.delete_message(
                     QueueUrl=QUEUE_URL,
                     ReceiptHandle=msg['ReceiptHandle']
@@ -91,6 +91,7 @@ HTML_TEMPLATE = """
         .vehicle-card { display: inline-block; background: #2a2a3c; padding: 10px 15px; margin: 5px; border-radius: 6px; text-align: left; font-size: 12px; width: 170px; vertical-align: top; }
         .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .normal { background-color: #00ff88; }
+        .danger { background-color: #ff4444; }
         .events-list { margin: 5px 0 0 0; padding-left: 15px; color: #ffdd57; }
         .events-list li { font-size: 11px; }
     </style>
@@ -141,7 +142,7 @@ HTML_TEMPLATE = """
                 const now = Date.now();
                 const laneHeight = canvas.height / 5;
 
-                // Filtrar coches inactivos (más de 15s sin mensajes)
+                // Filtrar coches inactivos (más de 15s sin mensajes en SQS)
                 const vehiclesArray = Object.values(data).filter(veh => {
                     return (now - veh.timestamp) <= 15000;
                 });
@@ -158,10 +159,10 @@ HTML_TEMPLATE = """
                     let trackWidth = canvas.width - 100;
                     let mappedX = 50 + (veh.x % trackWidth);
 
-                    // Determinar si tiene eventos activos críticos (ej: sudden braking)
+                    // Comprobar si hay alguna alerta activa (distinta de telemetría normal)
                     let hasAlert = veh.events && veh.events.some(e => e.type !== "normal telemetry");
 
-                    // Dibujar coche en el canvas (punto azul o rojo según alerta)
+                    // Dibujar el coche en el canvas
                     ctx.beginPath();
                     ctx.arc(mappedX, targetY, 12, 0, 2 * Math.PI);
                     ctx.fillStyle = hasAlert ? '#ff4444' : '#00ccff';
@@ -180,9 +181,9 @@ HTML_TEMPLATE = """
                         ctx.fillText('⚠️', mappedX - 5, targetY + 4);
                     }
 
-                    // Construir lista de HTML para los eventos actuales (hasta 3)
+                    // Generar lista HTML de eventos actuales (hasta 3 simultáneos)
                     let eventsHtml = "";
-                    let validEvents = veh.events ? veh.events.filter(e => (now - e.timestamp) < 10000) : [];
+                    let validEvents = veh.events ? veh.events.filter(e => (now - e.timestamp) < 15000) : [];
                     
                     if (validEvents.length === 0) {
                         eventsHtml = "<li>Ninguna</li>";
@@ -192,7 +193,7 @@ HTML_TEMPLATE = """
                         });
                     }
 
-                    // Tarjeta informativa con el diseño limpio solicitado
+                    // Tarjeta informativa inferior
                     const card = document.createElement('div');
                     card.className = `vehicle-card`;
                     card.innerHTML = `
