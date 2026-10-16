@@ -14,8 +14,8 @@ echo "Prueba fallida: falta Dockerfile."
 exit 1
 fi
 
-if [ -f "rsequirements.txt" ]; then
-echo "Prueba superada: Requirements.txt existe."
+if [ -f "requirements.txt" ]; then
+echo "Prueba superada: requirements.txt existe."
 exit 0
 else
 echo "Prueba fallida: falta Requirements.txt."
