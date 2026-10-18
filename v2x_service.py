@@ -12,12 +12,8 @@ QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/933596053553/V2X_Cola'
 vehicles_state = {}
 
 def sqs_listener():
-    if "TU_ACCOUNT_ID" in QUEUE_URL:
-        print("❌ ERROR: Debes cambiar 'TU_ACCOUNT_ID' por tu URL real de SQS en el código.")
-        return
-
     sqs = boto3.client('sqs', region_name=SQS_REGION)
-    print("✅ Escuchando eventos de la cola SQS en AWS...")
+    print("Esperando eventos de la cola SQS")
     
     while True:
         try:
@@ -71,7 +67,7 @@ def sqs_listener():
                     ReceiptHandle=msg['ReceiptHandle']
                 )
         except Exception as e:
-            print(f"Error procesando SQS: {e}")
+            print(f"Error en SQS: {e}")
         time.sleep(0.2)
 
 HTML_TEMPLATE = """
@@ -79,7 +75,6 @@ HTML_TEMPLATE = """
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard V2X - Circuito Cerrado</title>
     <style>
         body { font-family: Arial, sans-serif; background-color: #1a1a24; color: white; text-align: center; margin: 0; padding: 20px; }
         #canvas-container { margin: 15px auto; display: inline-block; border: 3px solid #444; border-radius: 8px; background-color: #111118; }
@@ -93,10 +88,10 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h1>🚗 Dashboard V2X - Circuito de 4 Carriles</h1>
+    <h1> Circuito de 4 Carriles</h1>
     <div id="canvas-container"><canvas id="map" width="700" height="400"></canvas></div>
     <h2>Vehículos en línea</h2>
-    <div id="vehicles-list">Esperando datos de la SQS...</div>
+    <div id="vehicles-list">Esperando datos de la SQS</div>
 
     <script>
         const canvas = document.getElementById('map');
@@ -142,17 +137,17 @@ HTML_TEMPLATE = """
                 });
 
                 if (vehiclesArray.length === 0) {
-                    listDiv.innerHTML = 'Esperando datos de la SQS o vehículos inactivos...';
+                    listDiv.innerHTML = 'Esperando datos de la SQS.';
                     return;
                 }
 
                 vehiclesArray.forEach((veh) => {
-                    let targetY = veh.y; // Usamos la posición Y exacta enviada por el simulador
+                    let targetY = veh.y;
                     let mappedX = veh.x;
 
                     let hasAlert = veh.events && veh.events.some(e => e.type !== "normal telemetry");
 
-                    // Dibujar el coche en el canvas
+                    // Representación de los coches
                     ctx.beginPath();
                     ctx.arc(mappedX, targetY, 12, 0, 2 * Math.PI);
                     ctx.fillStyle = hasAlert ? '#ff4444' : '#00ccff';
