@@ -1,4 +1,4 @@
-#!/bin/bash
+# Se comprueba qu existan los archivos necesarios para crear la imagen.
 
 if [ -f "v2x_service.py" ]; then
 echo "Prueba superada: v2x_service.py existe."
