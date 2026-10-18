@@ -3,7 +3,7 @@ import json
 import threading
 from flask import Flask, jsonify, render_template_string
 import boto3
-
+ 
 app = Flask(__name__)
 
 SQS_REGION = 'us-east-1'
